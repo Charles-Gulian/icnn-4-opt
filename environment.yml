@@ -1,0 +1,16 @@
+name: icnn4opt
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - tensorflow
+  - ipopt
+  - pip
+  - pip:
+      - cvxpy
+      - pyomo
