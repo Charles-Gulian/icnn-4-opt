@@ -98,17 +98,17 @@ class Poly_AC_OPF(Model):
 
     def initialize_model(self):
         # Run power flow
-        runpp(net, numba=False)
+        runpp(self.net, numba=False)
 
         # Extract complex bus voltages
-        vm = net.res_bus.vm_pu  # per unit voltage magnitude
-        va = np.deg2rad(net.res_bus.va_degree)  # voltage angle in degrees
+        vm = self.net.res_bus.vm_pu  # per unit voltage magnitude
+        va = np.deg2rad(self.net.res_bus.va_degree)  # voltage angle in degrees
         v = vm * np.exp(1j * va)
         v_re, v_im = v.map(np.real), v.map(np.imag)
 
         # Extract complex generator power injections
-        pg = net.res_gen.p_mw
-        qg = net.res_gen.q_mvar
+        pg = self.net.res_gen.p_mw
+        qg = self.net.res_gen.q_mvar
 
         # Initialize values
         for k in self.model.buses:

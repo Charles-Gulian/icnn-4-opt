@@ -10,7 +10,15 @@ dependencies:
   - pandas
   - tensorflow
   - ipopt
+  - jupyterlab
+  - tqdm
+  - pytorch
+  - torchvision
+  - torchaudio
+  - scikit-learn
   - pip
   - pip:
       - cvxpy
       - pyomo
+      - pypower
+      - pandapower
