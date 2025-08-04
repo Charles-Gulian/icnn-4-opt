@@ -1,52 +1,14 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-
-import pathlib
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils import data as data_utils
-from tqdm.notebook import tqdm
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using {device} device")
+
+from tqdm import tqdm
 from sklearn.model_selection import train_test_split
-
-import pypower as pp
-from pypower.api import runopf, ppoption
-
-ppopt = ppoption(VERBOSE=0, OUT_ALL=0, OPT={'OPF_ALG': 560})
-
-from pypower import case9, case14, case30, case57, case118, case300
-
-cases = {
-    "case9": case9,
-    "case14": case14,
-    "case30": case30,
-    "case57": case57,
-    "case118": case118,
-    "case300": case300,
-}
-
-
-def run_opf(case, Pd, Qd):
-    # Get load bus indices
-    inds = np.arange(case["bus"].shape[0])
-    load_buses_idx = list(inds[(case["bus"][:, 2] != 0) | (case["bus"][:, 3] != 0)].astype(object))
-
-    # Update case load vector
-    case["bus"][load_buses_idx, 2] = Pd
-    case["bus"][load_buses_idx, 3] = Qd
-
-    # Solve case
-    results = runopf(case, ppopt)
-    if results["success"]:
-        cost = results["f"]
-    else:
-        cost = np.nan
-
-    return cost
-
 
 # -----------------------------
 # Standard Feedforward NN Model
@@ -212,10 +174,6 @@ def create_batches(X, y, batch_size, shuffle=True):
 
 def train_model(model, train_loader, test_loader, optimizer="SGD", n_epochs=5000, learning_rate=0.1, weight_decay=0.0,
                 scheduler_step_size=None, scheduler_gamma=None, max_norm=None):
-    # Select device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using {device} device")
-    model.to(device)
 
     # Loss function
     loss_fn = nn.MSELoss()  # Mean square error
@@ -246,3 +204,134 @@ def save_model(model, save_path):
 def load_model(model, save_path):
     # Load saved model weights
     model.load_state_dict(torch.load(save_path, weights_only=True))
+
+if __name__ == "__main__":
+
+    import matplotlib.pyplot as plt
+
+    # -----------------------------
+    # Create Training Data
+    # -----------------------------
+
+    # Generate training data for f(x) = x^2 - alpha x^4 (non-convex)
+    np.random.seed(0)
+    torch.manual_seed(0)
+
+    def f(x, alpha=0.):
+        return x ** 2 - alpha * x ** 4
+
+
+    n_samples = 5000
+    X = 4 * np.random.randn(n_samples).reshape(-1, 1)
+    y = f(X)
+
+    # -----------------------------
+    # Train Both Models
+    # -----------------------------
+
+    # Create training/testing data sets
+    X_train, y_train, X_test, y_test = create_train_test_datasets(X, y)
+    train_loader1 = create_batches(X_train, y_train, batch_size=200)
+    train_loader2 = create_batches(X_train, y_train, batch_size=50)
+    test_loader = create_batches(X_test, y_test, batch_size=50)
+
+    # Initialize models
+    nn_model = FCNN(input_dim=1)
+    icnn_model = ICNN(input_dim=1)
+
+    # Train models
+
+    # Phase 1: SGD
+    nn_model, nn_train_history_phase1, nn_test_history_phase1 = train_model(
+        nn_model,
+        train_loader1,
+        test_loader,
+        optimizer="SGD",
+        n_epochs=500,
+        learning_rate=0.01,
+        weight_decay=1e-9,
+        scheduler_step_size=64,
+        scheduler_gamma=0.8,
+        max_norm=3.0
+    )
+
+    # Phase 2: Adam
+    nn_model, nn_train_history_phase2, nn_test_history_phase2 = train_model(
+        nn_model,
+        train_loader2,
+        test_loader,
+        optimizer="Adam",
+        n_epochs=500,
+        learning_rate=0.0001,
+        weight_decay=1e-9,
+        scheduler_step_size=64,
+        scheduler_gamma=0.8,
+        max_norm=3.0
+    )
+    nn_train_history = nn_train_history_phase1 + nn_train_history_phase2
+    nn_test_history = nn_test_history_phase1 + nn_test_history_phase2
+
+    # Phase 1: SGD
+    icnn_model, icnn_train_history_phase1, icnn_test_history_phase1 = train_model(
+        icnn_model,
+        train_loader1,
+        test_loader,
+        optimizer="SGD",
+        n_epochs=500,
+        learning_rate=0.1,
+        weight_decay=1e-9,
+        scheduler_step_size=64,
+        scheduler_gamma=0.8,
+        max_norm=3.0
+    )
+
+    # Phase 2: Adam
+    icnn_model, icnn_train_history_phase2, icnn_test_history_phase2 = train_model(
+        icnn_model,
+        train_loader2,
+        test_loader,
+        optimizer="Adam",
+        n_epochs=500,
+        learning_rate=0.0001,
+        weight_decay=1e-9,
+        scheduler_step_size=64,
+        scheduler_gamma=0.8,
+        max_norm=3.0
+    )
+    icnn_train_history = icnn_train_history_phase1 + icnn_train_history_phase2
+    icnn_test_history = icnn_test_history_phase1 + icnn_test_history_phase2
+
+    # -----------------------------
+    # Plotting
+    # -----------------------------
+
+    x_test = torch.linspace(-15, 15, 200).reshape(-1, 1)
+    y_true = f(x_test)
+
+    with torch.no_grad():
+        y_nn_pred = nn_model(x_test)
+        y_icnn_pred = icnn_model(x_test)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(x_test, y_true, label='True $f(x) = x^2 - \\alpha x^4$', color='black')
+    plt.plot(x_test, y_nn_pred, label='Standard NN', linestyle='--')
+    plt.plot(x_test, y_icnn_pred, label='ICNN', linestyle='-.')
+    plt.legend()
+    plt.show()
+
+    # Test model
+    plt.title("ICNN Train / Test Error")
+    plt.plot(np.sqrt(np.array(icnn_train_history))[10:], label="Train")
+    plt.plot(np.sqrt(np.array(icnn_test_history))[10:], label="Test")
+    plt.legend()
+    # plt.yscale('log')
+    plt.axis([0, None, 0, 10])
+    plt.show()
+
+    plt.title("NN Train / Test Error")
+    plt.plot(np.sqrt(np.array(nn_train_history))[10:], label="Train")
+    plt.plot(np.sqrt(np.array(nn_test_history))[10:], label="Test")
+    plt.legend()
+    # plt.yscale('log')
+    plt.axis([0, None, 0, 10])
+    plt.show()
